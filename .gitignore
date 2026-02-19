@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+
+# Не отправляем в GitHub (обучающие материалы — переносите в репо отдельно)
+ТЗ_Микросервисы_Маркетплейс.md
+docs/
+Список_для_GitHub.md

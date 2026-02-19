@@ -1,0 +1,29 @@
+{
+  "name": "payment-service",
+  "version": "1.0.0",
+  "description": "Payment processing microservice",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.3",
+    "kafkajs": "^2.2.4",
+    "uuid": "^9.0.1",
+    "@opentelemetry/api": "^1.7.0",
+    "@opentelemetry/sdk-node": "^0.52.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.52.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.52.0",
+    "@opentelemetry/resources": "^1.22.0",
+    "@opentelemetry/semantic-conventions": "^1.22.0"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.2",
+    "@types/node": "^20.10.0",
+    "@types/uuid": "^9.0.7",
+    "tsx": "^4.6.2",
+    "typescript": "^5.3.3"
+  }
+}

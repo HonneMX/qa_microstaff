@@ -1,0 +1,160 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Order Service API",
+    "description": "API сервиса обработки заказов маркетплейса. Для вызова из Postman или Swagger UI.",
+    "version": "1.0.0"
+  },
+  "servers": [{ "url": "/", "description": "Current" }],
+  "tags": [
+    { "name": "Health", "description": "Проверка доступности" },
+    { "name": "Orders", "description": "Заказы" },
+    { "name": "Test", "description": "Учебные сценарии ошибок" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "status": { "type": "string", "example": "ok" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders/{id}": {
+      "get": {
+        "tags": ["Orders"],
+        "summary": "Получить заказ по ID",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "X-Trace-Id", "in": "header", "required": false, "schema": { "type": "string" }, "description": "Опционально: свой traceId для трейсинга" }
+        ],
+        "responses": {
+          "200": { "description": "Заказ найден", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } } },
+          "404": { "description": "Заказ не найден", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/orders/{id}/events": {
+      "get": {
+        "tags": ["Orders"],
+        "summary": "SSE: поток событий по заказу",
+        "description": "Server-Sent Events. Подпишитесь после создания заказа, чтобы получить результат оплаты.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "Поток событий (text/event-stream)" } }
+      }
+    },
+    "/api/orders": {
+      "post": {
+        "tags": ["Orders"],
+        "summary": "Создать заказ",
+        "description": "Принимает заказ и кладёт в очередь RabbitMQ (order_requests). Воркер Order Service обрабатывает и отправляет запрос в Kafka (payment_requests). Ответ 202 — подпишитесь на SSE /api/orders/{id}/events для результата. X-Test-Error — учебные сценарии.",
+        "parameters": [
+          {
+            "name": "X-Test-Error",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["order_processing_failure", "bank_timeout", "payment_declined", "payment_service_unavailable"]
+            },
+            "description": "Учебная ошибка"
+          },
+          { "name": "X-Trace-Id", "in": "header", "required": false, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["items"],
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "name": { "type": "string" },
+                        "priceCents": { "type": "integer" },
+                        "quantity": { "type": "integer" }
+                      }
+                    }
+                  },
+                  "totalAmountCents": { "type": "integer", "description": "Сумма в копейках" },
+                  "simulateBankDelay": { "type": "boolean" },
+                  "simulatePaymentDeclined": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "Заказ принят в обработку (отправлен в очередь RabbitMQ)", "content": { "application/json": { "schema": { "type": "object", "properties": { "orderId": { "type": "string" }, "traceId": { "type": "string" }, "status": { "type": "string", "example": "submitted" } } } } } },
+          "400": { "description": "Невалидные данные", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "Ошибка", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "Сервис недоступен", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/test/trigger-error": {
+      "post": {
+        "tags": ["Test"],
+        "summary": "Учебный сценарий ошибки",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["order_processing_failure", "bank_timeout", "payment_declined", "payment_service_unavailable"]
+            }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Подсказка по X-Test-Error" },
+          "400": { "description": "Неверный type" },
+          "500": { "description": "Имитация order_processing_failure" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Order": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "traceId": { "type": "string" },
+          "status": { "type": "string", "enum": ["created", "sent_to_payment", "paid", "payment_failed"] },
+          "amountCents": { "type": "integer" },
+          "items": { "type": "array" },
+          "errorMessage": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "traceId": { "type": "string" },
+          "orderId": { "type": "string" },
+          "simulated": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
