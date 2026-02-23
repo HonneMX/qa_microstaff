@@ -15,13 +15,21 @@
 docker compose up -d
 ```
 
-Первый запуск может занять несколько минут (сборка образов order-service, payment-service, frontend). После старта проверьте:
+Первый запуск может занять несколько минут (сборка образов order-service — один образ для order-api и двух воркеров — payment-service, frontend). После старта проверьте:
 
 ```bash
 docker compose ps
 ```
 
 Все сервисы должны быть в состоянии `running` (или `Up`).
+
+**После обновления кода** (например, правки в order-service или переход на расслоённую архитектуру) пересоберите образы и поднимите контейнеры:
+
+```bash
+docker compose up -d --build
+```
+
+Полностью пересобирать все контейнеры не обязательно: `--build` пересоберёт только те образы, у которых изменился контекст или Dockerfile (обычно order-api и воркеры — один общий образ из папки order-service). Остальные сервисы (postgres, rabbitmq, kafka, frontend, payment-service) пересобираются только при изменении их кода.
 
 ## Доступные интерфейсы
 
@@ -33,18 +41,20 @@ docker compose ps
 | **RabbitMQ UI**| http://localhost:15672    | Очереди и сообщения (guest/guest)  |
 | **Kafka UI**   | http://localhost:8090     | Топики: `payment_requests` (Order→Payment), `order-events` (события заказов). По **traceId** можно проследить путь сообщения. |
 | **pgAdmin**    | http://localhost:5050     | Подключение к БД (admin@local.host / admin) |
-| **Grafana**    | http://localhost:3001     | Логи (Loki) и трейсы (Tempo), логин: admin / admin. Логи order-service и payment-service попадают в Loki автоматически. |
+| **Grafana**    | http://localhost:3001     | Логи (Loki) и трейсы (Tempo), логин: admin / admin. Логи order-api, order-worker-orders, order-worker-payment-results и payment-service попадают в Loki автоматически. |
 
 ## RabbitMQ и Kafka: путь заказа и трассировка по traceId
 
 Один заказ проходит через **оба брокера**, чтобы тестировщики могли отслеживать путь по одному **traceId** в RabbitMQ UI и Kafka UI.
 
-1. **Фронт** → **Order Service** (REST `POST /api/orders`) — заказ принимается, возвращается **202 Accepted** и заявка кладётся в RabbitMQ.
-2. **RabbitMQ** (очередь `order_requests`) → **Order Service** (воркер) забирает заявку, создаёт заказ в БД и отправляет запрос на оплату в **Kafka** (топик `payment_requests`).
-3. **Kafka** (топик `payment_requests`) → **Payment Service** обрабатывает оплату и кладёт результат в **RabbitMQ** (очередь `payment_results`).
-4. **RabbitMQ** (`payment_results`) → **Order Service** обновляет статус заказа и шлёт события в топик Kafka `order-events`.
+1. **Фронт** → **Order API** (REST `POST /api/orders`) — заказ принимается, возвращается **202 Accepted** и заявка кладётся в RabbitMQ (`order_requests`).
+2. **RabbitMQ** (`order_requests`) → **Order Worker (заказы)** забирает заявку, создаёт заказ в БД и отправляет запрос на оплату в **Kafka** (топик `payment_requests`).
+3. **Kafka** (`payment_requests`) → **Payment Service** обрабатывает оплату и кладёт результат в **RabbitMQ** (очередь `payment_results`).
+4. **RabbitMQ** (`payment_results`) → **Order Worker (результаты оплаты)** обновляет статус заказа и шлёт события в топик Kafka `order-events`.
 
-Во всех сообщениях передаётся один и тот же **traceId**. В **RabbitMQ UI** (http://localhost:15672) смотрите очереди `order_requests` и `payment_results`; в **Kafka UI** (http://localhost:8090) — топики `payment_requests` и `order-events`. В Loki/Grafana ищите логи по этому traceId по всем сервисам.
+Для демо по шагам можно останавливать по одному воркеру: без **order-worker-orders** копятся сообщения в `order_requests`; без **payment-service** — в Kafka `payment_requests`; без **order-worker-payment-results** — в `payment_results`. API при этом продолжает принимать заказы.
+
+Во всех сообщениях передаётся один и тот же **traceId**. В **RabbitMQ UI** (http://localhost:15672) видны три очереди: `order_requests`, `payment_requests`, `payment_results`; в текущем потоке используются `order_requests` и `payment_results` (запросы на оплату идут через Kafka). В **Kafka UI** (http://localhost:8090) — топики `payment_requests` и `order-events`. В Loki/Grafana ищите логи по этому traceId по всем сервисам.
 
 ## Подключение к развёрнутой базе данных
 

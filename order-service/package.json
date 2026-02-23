@@ -6,8 +6,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:api": "node dist/index-api.js",
+    "start:worker-orders": "node dist/index-worker-orders.js",
+    "start:worker-payment-results": "node dist/index-worker-payment-results.js",
     "dev": "tsx watch src/index.ts",
-    "db: migrate": "node dist/db/migrate.js"
+    "db:migrate": "node dist/db/migrate.js"
   },
   "dependencies": {
     "amqplib": "^0.10.3",

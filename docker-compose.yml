@@ -135,19 +135,19 @@ services:
       - loki
       - tempo
 
-  # --- Микросервисы ---
-  order-service:
+  # --- Микросервисы (расслоение для демо: можно останавливать по одному consumer и смотреть накопление в очередях) ---
+  order-api:
     build:
       context: ./order-service
       dockerfile: Dockerfile
+    command: ["node", "dist/index-api.js"]
     environment:
       NODE_ENV: production
       PORT: 8080
       DATABASE_URL: postgresql://marketplace:marketplace_secret@postgres:5432/marketplace
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
-      KAFKA_BROKERS: kafka:9092
       OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
-      SERVICE_NAME: order-service
+      SERVICE_NAME: order-api
       LOKI_URL: http://loki:3100
     ports:
       - "8080:8080"
@@ -156,7 +156,65 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    labels:
+      logging: "promtail"
+
+  order-worker-orders:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    command: ["node", "dist/index-worker-orders.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://marketplace:marketplace_secret@postgres:5432/marketplace
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      KAFKA_BROKERS: kafka:9092
+      ORDER_API_URL: http://order-api:8080
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+      SERVICE_NAME: order-worker-orders
+      LOKI_URL: http://loki:3100
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
       kafka:
+        condition: service_started
+      order-api:
+        condition: service_started
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    labels:
+      logging: "promtail"
+
+  order-worker-payment-results:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    command: ["node", "dist/index-worker-payment-results.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://marketplace:marketplace_secret@postgres:5432/marketplace
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      KAFKA_BROKERS: kafka:9092
+      ORDER_API_URL: http://order-api:8080
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+      SERVICE_NAME: order-worker-payment-results
+      LOKI_URL: http://loki:3100
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      order-api:
         condition: service_started
       tempo:
         condition: service_healthy
@@ -195,7 +253,7 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - order-service
+      - order-api
     environment:
       VITE_ORDER_API_URL: http://localhost:8080
 

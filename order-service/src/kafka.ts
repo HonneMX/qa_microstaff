@@ -10,8 +10,9 @@ let producer: Awaited<ReturnType<Kafka["producer"]>> | null = null;
 
 export async function connectKafka(): Promise<void> {
   try {
+    const clientId = process.env.SERVICE_NAME || "order-service";
     kafka = new Kafka({
-      clientId: "order-service",
+      clientId,
       brokers: KAFKA_BROKERS.split(","),
     });
     producer = kafka.producer();
