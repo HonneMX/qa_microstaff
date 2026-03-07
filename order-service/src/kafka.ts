@@ -23,6 +23,20 @@ export async function connectKafka(): Promise<void> {
   }
 }
 
+async function reconnectProducer(): Promise<boolean> {
+  if (!kafka) return false;
+  try {
+    if (producer) await producer.disconnect().catch(() => {});
+    producer = kafka.producer();
+    await producer.connect();
+    logger.info("Kafka producer reconnected");
+    return true;
+  } catch (err) {
+    logger.warn("Kafka producer reconnect failed", { error: String(err) });
+    return false;
+  }
+}
+
 export interface PaymentRequestMessage {
   traceId: string;
   orderId: string;
@@ -31,22 +45,30 @@ export interface PaymentRequestMessage {
 }
 
 export async function publishPaymentRequest(msg: PaymentRequestMessage): Promise<boolean> {
-  if (!producer) return false;
-  try {
+  const send = async (): Promise<boolean> => {
+    if (!producer) return false;
     await producer.send({
       topic: TOPIC_PAYMENT_REQUESTS,
       messages: [
-        {
-          key: msg.orderId,
-          value: JSON.stringify(msg),
-          headers: { traceId: msg.traceId },
-        },
+        { key: msg.orderId, value: JSON.stringify(msg), headers: { traceId: msg.traceId } },
       ],
     });
     logger.debug("Kafka payment request published", { orderId: msg.orderId });
     return true;
+  };
+  try {
+    return await send();
   } catch (err) {
-    logger.warn("Failed to publish payment request to Kafka", { orderId: msg.orderId, error: String(err) });
+    const errStr = String(err);
+    if (errStr.includes("disconnected") && (await reconnectProducer())) {
+      try {
+        return await send();
+      } catch (retryErr) {
+        logger.warn("Failed to publish payment request to Kafka after reconnect", { orderId: msg.orderId, error: String(retryErr) });
+        return false;
+      }
+    }
+    logger.warn("Failed to publish payment request to Kafka", { orderId: msg.orderId, error: errStr });
     return false;
   }
 }
@@ -55,8 +77,8 @@ export async function publishOrderEvent(
   event: "order_created" | "order_paid" | "order_payment_failed",
   payload: { traceId: string; orderId: string; [key: string]: unknown }
 ): Promise<void> {
-  if (!producer) return;
-  try {
+  const send = async (): Promise<void> => {
+    if (!producer) return;
     await producer.send({
       topic: TOPIC_ORDER_EVENTS,
       messages: [
@@ -68,8 +90,20 @@ export async function publishOrderEvent(
       ],
     });
     logger.debug("Kafka event published", { event, orderId: payload.orderId });
+  };
+  try {
+    await send();
   } catch (err) {
-    logger.warn("Failed to publish Kafka event", { event, error: String(err) });
+    const errStr = String(err);
+    if (errStr.includes("disconnected") && (await reconnectProducer())) {
+      try {
+        await send();
+      } catch (retryErr) {
+        logger.warn("Failed to publish Kafka event after reconnect", { event, error: String(retryErr) });
+      }
+      return;
+    }
+    logger.warn("Failed to publish Kafka event", { event, error: errStr });
   }
 }
 

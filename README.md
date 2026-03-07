@@ -105,6 +105,18 @@ psql "postgresql://marketplace:marketplace_secret@localhost:5432/marketplace"
 5. **Explore** → выберите **Loki** → запрос: `{service=~"order-service|payment-service"} | json | traceId="$traceId"` (подставьте свой traceId). Либо по сервису: `{service="order-service"}` или `{service="payment-service"}`.
 6. **Explore** → выберите **Tempo** → вкладка **TraceQL** → вставьте в поле запроса **Trace ID для Tempo** (32 символа, hex — он есть в свёрнутом блоке на фронте после покупки) **без кавычек** → Run query. Внимание: UUID из фронта (с дефисами) в TraceQL даёт ошибку — нужен именно OTel Trace ID (без дефисов), он возвращается в ответе API и отображается в блоке «Идентификаторы для поиска в Grafana».
 
+### Если Tempo возвращает 400 при поиске по trace ID
+
+В логах Tempo видно `GET /api/search?q=... status=400`. Эндпоинт **Search** ожидает в параметре `q` **TraceQL-выражение** (фильтры по сервису, duration, тегам), а не голый trace ID. Если в Grafana выбран тип запроса **Search** и в поле введён trace ID, запрос уходит как `q=<traceId>` — Tempo воспринимает это как невалидный TraceQL и возвращает 400.
+
+**Что делать:**
+
+1. Выберите тип запроса **TraceQL** (вкладка **TraceQL** в Explore), а не Search.
+2. В поле запроса введите **только trace ID — 32 hex-символа без дефисов**, например: `e6e28b16d33c4a91b571f7a2c97daaa8` (UUID с дефисами преобразуйте: уберите все дефисы). Нажмите Run query.
+3. Либо в том же TraceQL-редакторе задайте явный запрос: `{ trace:id = "e6e28b16d33c4a91b571f7a2c97daaa8" }` — в кавычках тот же 32-символьный ID без дефисов.
+
+Trace ID без дефисов есть на фронте в блоке «Идентификаторы для поиска в Grafana» после оформления заказа; его же возвращает API в поле ответа.
+
 ## Учебные ошибки (X-Test-Error)
 
 При создании заказа можно передать заголовок **X-Test-Error** или выбрать значение в выпадающем списке на фронте:
@@ -128,6 +140,35 @@ POST http://localhost:8080/api/test/trigger-error?type=order_processing_failure
 
 - **Swagger UI:** откройте http://localhost:8080/api-docs — все методы API с описанием, можно вызывать из браузера.
 - **Импорт в Postman:** в Postman выберите **Import** → **Link** и укажите `http://localhost:8080/api-docs.json`, либо **Import** → **File** и загрузите JSON, полученный по GET http://localhost:8080/api-docs.json. После импорта создайте окружение с переменной `baseUrl` = `http://localhost:8080`.
+
+## Если образы не загружаются (таймаут, Docker Hub недоступен)
+
+При первом запуске или при обновлении образов Docker скачивает их с Docker Hub (registry.docker.io). Если появляется ошибка вида:
+
+```
+Error response from daemon: Head "https://registry-1.docker.io/v2/.../manifests/...": 
+Get "https://auth.docker.io/token?...": context deadline exceeded
+```
+
+это значит **таймаут при обращении к Docker Hub** — запрос не успел выполниться (сеть медленная, нестабильная или доступ к Docker Hub ограничен).
+
+**Что сделать:**
+
+1. **Повторить позже** — выполните `docker compose up -d` или `docker compose pull` ещё раз; при нестабильном интернете часто помогает повторная попытка.
+
+2. **Проверить доступ в интернет** — откройте в браузере https://hub.docker.com. Если страница долго грузится или не открывается, проблема в доступе к Docker Hub из вашей сети.
+
+3. **Проверить VPN и прокси** — если включён VPN или корпоративный прокси, они могут блокировать или замедлять доступ к Docker Hub. Попробуйте отключить VPN или настроить Docker на использование прокси (в документации Docker: HTTP/HTTPS proxy for Docker daemon).
+
+4. **Скачать только проблемный образ** — если в ошибке указан конкретный образ (например, `grafana/promtail:2.9.2`), попробуйте скачать его отдельно:  
+   `docker pull grafana/promtail:2.9.2`  
+   Если и эта команда падает с таймаутом, причина в сети или доступе к Docker Hub.
+
+5. **Использовать зеркало Docker Hub** (если есть) — в корпоративной среде часто настроено внутреннее зеркало; в настройках Docker (daemon или `~/.docker/config.json`) можно указать другой registry.
+
+Итог: сообщение **context deadline exceeded** при обращении к **auth.docker.io** или **registry-1.docker.io** означает, что Docker не смог вовремя подключиться к серверам Docker Hub. Решение — проверить сеть, при необходимости отключить VPN или повторить запрос позже.
+
+---
 
 ## Остановка
 
